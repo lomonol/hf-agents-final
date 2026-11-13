@@ -176,6 +176,19 @@ OLD_OBSERVATION_CHARS = 600
 
 class PacedGroqModel(OpenAIServerModel):
     """OpenAIServerModel that waits and retries when Groq returns a rate-limit (429) error."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Some providers (e.g. NVIDIA NIM) can omit `usage` in responses; smolagents reads
+        # response.usage.prompt_tokens and crashes. Fill in zero usage when it is missing.
+        from openai.types import CompletionUsage
+        original_create = self.client.chat.completions.create
+        def create_with_usage(*a, **kw):
+            response = original_create(*a, **kw)
+            if getattr(response, "usage", None) is None:
+                response.usage = CompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+            return response
+        self.client.chat.completions.create = create_with_usage
+
     def generate(self, *args, **kwargs):
         import time
         from openai import RateLimitError
