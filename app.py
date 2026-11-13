@@ -8,6 +8,28 @@ from smolagents import OpenAIServerModel, CodeAgent, InferenceClientModel, WebSe
 
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
+
+# Answers are saved here as they come in, so a run cut off by a rate or quota limit
+# can resume: the next run skips questions that already have a good answer.
+ANSWERS_FILE = "answers.json"
+
+def load_saved_answers() -> dict:
+    import json
+    try:
+        with open(ANSWERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+def save_answer(saved: dict, task_id: str, answer) -> None:
+    import json
+    saved[task_id] = answer
+    with open(ANSWERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(saved, f, ensure_ascii=False, indent=2)
+
+def is_good_answer(answer) -> bool:
+    return answer is not None and not str(answer).startswith(("ERROR", "AGENT ERROR"))
 
 # Wikipedia/Wikimedia return 403 to the default python-requests User-Agent.
 # Give every requests call (incl. smolagents' visit_webpage) a descriptive one.
@@ -181,9 +203,12 @@ class SmolAgentsGAIAAgent:
     def __init__(self):
         print("Initializing Smolagents CodeAgent with Web Search, Web Page Reader, and File Downloader...")
 
-        # Gemini (free tier, high token limits) when GEMINI_API_KEY is set; otherwise Groq.
+        # Provider order: NVIDIA NIM, then Gemini, then Groq, depending on which key is set.
         # MODEL_ID overrides the default model name for whichever provider is used.
-        if os.getenv("GEMINI_API_KEY"):
+        if os.getenv("NVIDIA_API_KEY"):
+            model_id = os.getenv("MODEL_ID", "meta/llama-3.3-70b-instruct")
+            api_base, api_key = NVIDIA_API_BASE, os.environ["NVIDIA_API_KEY"]
+        elif os.getenv("GEMINI_API_KEY"):
             model_id = os.getenv("MODEL_ID", "gemini-3.8-flash")
             api_base, api_key = GEMINI_API_BASE, os.environ["GEMINI_API_KEY"]
         else:
@@ -268,7 +293,9 @@ def run_and_submit_all():
 
     results_log = []
     answers_payload = []
-    
+    saved = load_saved_answers()
+    print(f"Loaded {sum(is_good_answer(a) for a in saved.values())} saved answers from {ANSWERS_FILE}")
+
     for item in questions_data:
         task_id = item.get("task_id")
         question_text = item.get("question")
@@ -276,12 +303,20 @@ def run_and_submit_all():
         
         if not task_id or question_text is None:
             continue
-            
+
+        if is_good_answer(saved.get(task_id)):
+            submitted_answer = saved[task_id]
+            print(f"Reusing saved answer for {task_id}: {submitted_answer}")
+            answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
+            results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
+            continue
+
         try:
             file_context = f"[attached file: {file_name}] " if file_name else ""
             full_prompt = f"[task_id: {task_id}] {file_context}{question_text}"
-            
+
             submitted_answer = agent(full_prompt)
+            save_answer(saved, task_id, submitted_answer)
             answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
             results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
         except Exception as e:
