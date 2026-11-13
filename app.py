@@ -163,9 +163,10 @@ class SmolAgentsGAIAAgent:
             print(f"Error during agent execution: {e}")
             return f"ERROR: {e}"
 
-def run_and_submit_all(profile: gr.OAuthProfile | None):
+def run_and_submit_all():
+    # Local run: no Hugging Face login session, so the username comes from HF_USERNAME.
     space_id = os.getenv("SPACE_ID")
-    username = profile.username if profile else HF_USERNAME
+    username = HF_USERNAME
     print(f"Submitting as Hugging Face user: {username}")
 
     api_url = DEFAULT_API_URL
