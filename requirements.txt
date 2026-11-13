@@ -1,4 +1,10 @@
-gradio[oauth]==5.25.2
+smolagents
+gradio
 requests
 pandas
-smolagents
+ddgs
+bs4
+markdownify
+openpyxl
+pypdf
+openai

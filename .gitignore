@@ -1,6 +1,7 @@
-.venv/
-.env
-__pycache__/
 *.pyc
 .DS_Store
+.env
 .gradio/
+.venv/
+__pycache__/
+gaia_files/
