@@ -8,6 +8,11 @@ from smolagents import OpenAIServerModel, CodeAgent, InferenceClientModel, DuckD
 
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
+# Wikipedia/Wikimedia return 403 to the default python-requests User-Agent.
+# Give every requests call (incl. smolagents' visit_webpage) a descriptive one.
+AGENT_USER_AGENT = "GAIA-course-agent/1.0 (educational agent; python-requests)"
+requests.utils.default_user_agent = lambda *args, **kwargs: AGENT_USER_AGENT
+
 # --- Constants ---
 DEFAULT_API_URL = "https://agents-course-unit4-scoring.hf.space"
 
