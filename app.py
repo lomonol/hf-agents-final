@@ -146,27 +146,58 @@ def transcribe_audio(file_path: str) -> str:
     except Exception as e:
         return f"Error transcribing audio: {e}"
 
+# --- Groq free tier: stay under the per-minute token limit ---
+# The free tier allows ~7,000 input tokens per minute for this model, and every agent step
+# re-sends the whole history. So: cap tool output, shrink old observations, and wait on 429s.
+OLD_OBSERVATION_CHARS = 600
+
+class PacedGroqModel(OpenAIServerModel):
+    """OpenAIServerModel that waits and retries when Groq returns a rate-limit (429) error."""
+    def generate(self, *args, **kwargs):
+        import time
+        from openai import RateLimitError
+        for attempt in range(6):
+            try:
+                return super().generate(*args, **kwargs)
+            except RateLimitError as e:
+                print(f"Groq rate limit hit, waiting 60 s (attempt {attempt + 1}/6): {str(e)[:120]}")
+                time.sleep(60)
+        return super().generate(*args, **kwargs)
+
+def shrink_old_observations(memory_step, agent=None):
+    """Step callback: truncate tool output from earlier steps so the prompt stays small."""
+    from smolagents.memory import ActionStep
+    if agent is None:
+        return
+    for step in agent.memory.steps:
+        if step is memory_step or not isinstance(step, ActionStep):
+            continue
+        if step.observations and len(step.observations) > OLD_OBSERVATION_CHARS:
+            step.observations = step.observations[:OLD_OBSERVATION_CHARS] + "\n...[older output truncated]"
+
 # --- Smolagents Agent Definition ---
 class SmolAgentsGAIAAgent:
     def __init__(self):
         print("Initializing Smolagents CodeAgent with Web Search, Web Page Reader, and File Downloader...")
-        
-        self.model = OpenAIServerModel(
+
+        self.model = PacedGroqModel(
             model_id="qwen/qwen3.8-27b",
             api_base=GROQ_API_BASE,
             api_key=os.environ["GROQ_API_KEY"],
         )
         # DuckDuckGoSearchTool (ddgs) returns "No results found" when throttled;
         # WebSearchTool's DuckDuckGo HTML backend works, and Wikipedia has its own free search API.
-        self.tools = [WebSearchTool(engine="duckduckgo"), wikipedia_search, VisitWebpageTool(),
-                      download_task_file, transcribe_audio]
-        
+        # Outputs are capped so a single request stays under Groq's per-minute token limit.
+        self.tools = [WebSearchTool(engine="duckduckgo", max_results=5), wikipedia_search,
+                      VisitWebpageTool(max_output_length=3000), download_task_file, transcribe_audio]
+
         self.agent = CodeAgent(
             tools=self.tools,
             model=self.model,
             additional_authorized_imports=["requests", "bs4", "json", "math", "pandas", "pypdf", "openpyxl"],
             max_steps=10,
-            verbosity_level=1
+            verbosity_level=1,
+            step_callbacks=[shrink_old_observations],
         )
 
     def __call__(self, question: str) -> str:
