@@ -309,31 +309,39 @@ def run_and_submit_all():
     saved = load_saved_answers()
     print(f"Loaded {sum(is_good_answer(a) for a in saved.values())} saved answers from {ANSWERS_FILE}")
 
-    for item in questions_data:
-        task_id = item.get("task_id")
-        question_text = item.get("question")
-        file_name = item.get("file_name")
-        
-        if not task_id or question_text is None:
-            continue
+    # Run several questions at once (each worker gets its own agent; agents are not thread-safe).
+    # PARALLEL=1 runs them one by one, as before.
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    workers = max(1, int(os.getenv("PARALLEL", "4")))
+    save_lock = threading.Lock()
+    local = threading.local()
 
+    def answer_one(item):
+        task_id, question_text, file_name = item.get("task_id"), item.get("question"), item.get("file_name")
         if is_good_answer(saved.get(task_id)):
-            submitted_answer = saved[task_id]
-            print(f"Reusing saved answer for {task_id}: {submitted_answer}")
-            answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
-            results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
-            continue
-
+            print(f"Reusing saved answer for {task_id}: {saved[task_id]}")
+            return task_id, question_text, saved[task_id], True
         try:
+            if not hasattr(local, "agent"):
+                local.agent = SmolAgentsGAIAAgent()
             file_context = f"[attached file: {file_name}] " if file_name else ""
-            full_prompt = f"[task_id: {task_id}] {file_context}{question_text}"
-
-            submitted_answer = agent(full_prompt)
-            save_answer(saved, task_id, submitted_answer)
-            answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
-            results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
+            answer = local.agent(f"[task_id: {task_id}] {file_context}{question_text}")
+            with save_lock:
+                save_answer(saved, task_id, answer)
+            return task_id, question_text, answer, True
         except Exception as e:
-             results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": f"AGENT ERROR: {e}"})
+            return task_id, question_text, f"AGENT ERROR: {e}", False
+
+    items = [it for it in questions_data if it.get("task_id") and it.get("question") is not None]
+    print(f"Answering {len(items)} questions with {workers} in parallel...")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(answer_one, items))   # keeps the original question order
+
+    for task_id, question_text, answer, ok in results:
+        if ok:
+            answers_payload.append({"task_id": task_id, "submitted_answer": answer})
+        results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": answer})
 
     if not answers_payload:
         return "Agent did not produce any answers to submit.", pd.DataFrame(results_log)
