@@ -219,7 +219,7 @@ class SmolAgentsGAIAAgent:
         # Provider order: NVIDIA NIM, then Gemini, then Groq, depending on which key is set.
         # MODEL_ID overrides the default model name for whichever provider is used.
         if os.getenv("NVIDIA_API_KEY"):
-            model_id = os.getenv("MODEL_ID", "deepseek-ai/deepseek-v4.1-flash")
+            model_id = os.getenv("MODEL_ID", "z-ai/glm-5.3-flash")
             api_base, api_key = NVIDIA_API_BASE, os.environ["NVIDIA_API_KEY"]
         elif os.getenv("GEMINI_API_KEY"):
             model_id = os.getenv("MODEL_ID", "gemini-3.8-flash")
