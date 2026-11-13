@@ -4,7 +4,7 @@ import requests
 import inspect
 import pandas as pd
 from openai import OpenAI
-from smolagents import OpenAIServerModel, CodeAgent, InferenceClientModel, DuckDuckGoSearchTool, VisitWebpageTool, tool
+from smolagents import OpenAIServerModel, CodeAgent, InferenceClientModel, WebSearchTool, VisitWebpageTool, tool
 
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
@@ -98,6 +98,36 @@ def download_from_gaia_dataset(task_id: str) -> str:
             return f"File '{name}' content:\n{text_f.read()}"
     return f"File successfully downloaded and saved locally as: {path}"
 
+# --- Wikipedia Search Tool (free MediaWiki API, no key) ---
+@tool
+def wikipedia_search(query: str) -> str:
+    """
+    Searches English Wikipedia and returns the top matching page titles, URLs and snippets.
+    Open a result with visit_webpage to read the full article.
+
+    Args:
+        query: What to search for on Wikipedia (e.g. 'Mercedes Sosa discography').
+    """
+    try:
+        r = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 5},
+            timeout=20,
+        )
+        r.raise_for_status()
+        hits = r.json()["query"]["search"]
+        if not hits:
+            return f"No Wikipedia results for: {query}"
+        lines = []
+        for h in hits:
+            title = h["title"]
+            snippet = h["snippet"].replace('<span class="searchmatch">', "").replace("</span>", "")
+            url = "https://en.wikipedia.org/wiki/" + title.replace(" ", "_")
+            lines.append(f"- {title} ({url}): {snippet}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error searching Wikipedia: {e}"
+
 # --- Audio Transcription Tool (Groq Whisper, free tier) ---
 @tool
 def transcribe_audio(file_path: str) -> str:
@@ -126,7 +156,10 @@ class SmolAgentsGAIAAgent:
             api_base=GROQ_API_BASE,
             api_key=os.environ["GROQ_API_KEY"],
         )
-        self.tools = [DuckDuckGoSearchTool(), VisitWebpageTool(), download_task_file, transcribe_audio]
+        # DuckDuckGoSearchTool (ddgs) returns "No results found" when throttled;
+        # WebSearchTool's DuckDuckGo HTML backend works, and Wikipedia has its own free search API.
+        self.tools = [WebSearchTool(engine="duckduckgo"), wikipedia_search, VisitWebpageTool(),
+                      download_task_file, transcribe_audio]
         
         self.agent = CodeAgent(
             tools=self.tools,
@@ -143,6 +176,7 @@ class SmolAgentsGAIAAgent:
             f"Answer the following question accurately. "
             f"If the question references an attached file, use your download_task_file tool with the given task_id to inspect it. "
             f"If the attached file is audio (.mp3), download it first, then pass the saved file path to transcribe_audio. "
+            f"For facts likely on Wikipedia, try wikipedia_search first, then open the page with visit_webpage. "
             f"If you need deeper information from a URL, use visit_webpage. "
             f"Your response must contain ONLY the final direct answer (e.g., a number, a proper noun, or a short phrase). "
             f"Do NOT write full sentences, do NOT include markdown formatting, and do NOT include the text 'FINAL ANSWER'. "
