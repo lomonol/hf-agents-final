@@ -1,0 +1,4 @@
+gradio[oauth]==5.25.2
+requests
+pandas
+smolagents
