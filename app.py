@@ -184,7 +184,7 @@ class SmolAgentsGAIAAgent:
         # Gemini (free tier, high token limits) when GEMINI_API_KEY is set; otherwise Groq.
         # MODEL_ID overrides the default model name for whichever provider is used.
         if os.getenv("GEMINI_API_KEY"):
-            model_id = os.getenv("MODEL_ID", "gemini-2.5-flash")
+            model_id = os.getenv("MODEL_ID", "gemini-3.8-flash")
             api_base, api_key = GEMINI_API_BASE, os.environ["GEMINI_API_KEY"]
         else:
             model_id = os.getenv("MODEL_ID", "qwen/qwen3.8-27b")
