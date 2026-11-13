@@ -7,6 +7,7 @@ from openai import OpenAI
 from smolagents import OpenAIServerModel, CodeAgent, InferenceClientModel, WebSearchTool, VisitWebpageTool, tool
 
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Wikipedia/Wikimedia return 403 to the default python-requests User-Agent.
 # Give every requests call (incl. smolagents' visit_webpage) a descriptive one.
@@ -180,11 +181,16 @@ class SmolAgentsGAIAAgent:
     def __init__(self):
         print("Initializing Smolagents CodeAgent with Web Search, Web Page Reader, and File Downloader...")
 
-        self.model = PacedGroqModel(
-            model_id="qwen/qwen3.8-27b",
-            api_base=GROQ_API_BASE,
-            api_key=os.environ["GROQ_API_KEY"],
-        )
+        # Gemini (free tier, high token limits) when GEMINI_API_KEY is set; otherwise Groq.
+        # MODEL_ID overrides the default model name for whichever provider is used.
+        if os.getenv("GEMINI_API_KEY"):
+            model_id = os.getenv("MODEL_ID", "gemini-2.5-flash")
+            api_base, api_key = GEMINI_API_BASE, os.environ["GEMINI_API_KEY"]
+        else:
+            model_id = os.getenv("MODEL_ID", "qwen/qwen3.8-27b")
+            api_base, api_key = GROQ_API_BASE, os.environ["GROQ_API_KEY"]
+        print(f"Using model {model_id} via {api_base}")
+        self.model = PacedGroqModel(model_id=model_id, api_base=api_base, api_key=api_key)
         # DuckDuckGoSearchTool (ddgs) returns "No results found" when throttled;
         # WebSearchTool's DuckDuckGo HTML backend works, and Wikipedia has its own free search API.
         # Outputs are capped so a single request stays under Groq's per-minute token limit.
